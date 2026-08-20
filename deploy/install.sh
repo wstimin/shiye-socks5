@@ -11,6 +11,7 @@ SERVICE_DIR="/etc/systemd/system"
 HELPER_PATH="/usr/local/libexec/sk5-panel-helper"
 CONTAINER_UID=10001
 CONTAINER_GID=10001
+THREEPROXY_VERSION="0.9.5"
 
 log() { printf '\033[1;36m[sk5面板]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[错误]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -37,7 +38,24 @@ fi
 log "安装宿主机网络组件和 Docker"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ca-certificates curl docker.io 3proxy iproute2 jq nftables openssl ppp procps socat sudo util-linux xl2tpd
+  ca-certificates curl docker.io iproute2 jq nftables openssl ppp procps socat sudo util-linux xl2tpd
+
+if ! command -v 3proxy >/dev/null 2>&1; then
+  if apt-cache show 3proxy >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y 3proxy
+  else
+    log "当前软件源没有 3proxy，编译官方 ${THREEPROXY_VERSION} 版本"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential
+    BUILD_DIR="$(mktemp -d)"
+    curl --fail --location --silent --show-error \
+      "https://github.com/3proxy/3proxy/archive/refs/tags/${THREEPROXY_VERSION}.tar.gz" \
+      -o "$BUILD_DIR/3proxy.tar.gz"
+    tar -xzf "$BUILD_DIR/3proxy.tar.gz" -C "$BUILD_DIR"
+    make -C "$BUILD_DIR/3proxy-${THREEPROXY_VERSION}" -f Makefile.Linux
+    install -o root -g root -m 0755 "$BUILD_DIR/3proxy-${THREEPROXY_VERSION}/bin/3proxy" /usr/bin/3proxy
+    rm -rf "$BUILD_DIR"
+  fi
+fi
 systemctl enable --now docker nftables
 
 log "拉取面板镜像：$IMAGE"

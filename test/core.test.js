@@ -205,11 +205,15 @@ test('container deployment keeps the panel unprivileged and delegates fixed host
   const installer = fs.readFileSync(new URL('../deploy/install.sh', import.meta.url), 'utf8');
 
   assert.match(dockerfile, /^USER sk5panel$/m);
+  assert.match(dockerfile, /THREEPROXY_VERSION=0\.9\.5/);
+  assert.match(dockerfile, /COPY --from=threeproxy-builder .*\/usr\/bin\/3proxy/);
   assert.match(hostExecutor, /nsenter --target 1 --mount --uts --ipc --net --pid/);
   assert.doesNotMatch(sudoers, /NOPASSWD:\s*ALL/);
   assert.match(sudoers, /system check readiness/);
   assert.match(service, /--network host --pid host --privileged/);
   assert.match(service, /--volume \/var\/lib\/sk5-panel:\/var\/lib\/sk5-panel:rw/);
   assert.match(installer, /ghcr\.io\/wstimin\/shiye-socks5:latest/);
+  assert.match(installer, /apt-cache show 3proxy/);
+  assert.match(installer, /Makefile\.Linux/);
   assert.match(installer, /system\.ready \/\/ false/);
 });
