@@ -1,0 +1,14 @@
+[Unit]
+Description=sk5 panel L2TP instance %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/sk5-panel-helper l2tp exec %i
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "$(id -u)" -eq 0 ]] || { echo "host executor must run as root" >&2; exit 1; }
+[[ -r /proc/1/ns/mnt && -r /proc/1/ns/net && -r /proc/1/ns/pid ]] || {
+  echo "host namespaces are unavailable; start with --pid host --network host --privileged" >&2
+  exit 1
+}
+
+exec nsenter --target 1 --mount --uts --ipc --net --pid -- \
+  /usr/local/libexec/sk5-panel-helper "$@"

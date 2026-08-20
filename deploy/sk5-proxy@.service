@@ -1,0 +1,19 @@
+[Unit]
+Description=sk5 panel proxy instance %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/sk5-panel-helper proxy exec %i
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=1048576
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/sk5-panel/runtime
+
+[Install]
+WantedBy=multi-user.target

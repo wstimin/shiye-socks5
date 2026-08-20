@@ -1,0 +1,21 @@
+[Unit]
+Description=sk5 panel management service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sk5panel
+Group=sk5panel
+WorkingDirectory=/opt/sk5-panel
+EnvironmentFile=/etc/sk5-panel/panel.env
+ExecStart=/usr/bin/node /opt/sk5-panel/src/server.js
+Restart=always
+RestartSec=3
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sk5-panel /etc/systemd/system/multi-user.target.wants
+
+[Install]
+WantedBy=multi-user.target

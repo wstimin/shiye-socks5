@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RESOURCE="${1:-}"
+ACTION="${2:-}"
+ID="${3:-}"
+RUNTIME_ROOT="${SK5_RUNTIME_ROOT:-/var/lib/sk5-panel/runtime}"
+
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || fail "helper must run as root"
+
+if [[ "$RESOURCE" == "system" && "$ACTION" == "check" && "$ID" == "readiness" ]]; then
+  required=(ip 3proxy curl jq socat nft xl2tpd pppd systemctl)
+  missing=()
+  for binary in "${required[@]}"; do
+    command -v "$binary" >/dev/null 2>&1 || missing+=("$binary")
+  done
+  if ((${#missing[@]})); then
+    jq -n --arg missing "${missing[*]}" '{ready:false,missing:$missing}'
+    exit 1
+  fi
+  jq -n '{ready:true}'
+  exit 0
+fi
+
+[[ "$RESOURCE" =~ ^(proxy|l2tp)$ ]] || fail "invalid resource"
+[[ "$ID" =~ ^[a-zA-Z0-9-]+$ ]] || fail "invalid id"
+
+if [[ "$RESOURCE" == "proxy" ]]; then
+  DIR="$RUNTIME_ROOT/proxies/$ID"
+else
+  DIR="$RUNTIME_ROOT/l2tp/$ID"
+fi
+MANIFEST="$DIR/manifest.json"
+[[ -f "$MANIFEST" ]] || { [[ "$ACTION" == "delete" ]] && exit 0; fail "manifest not found"; }
+
+jqv() { jq -r "$1" "$MANIFEST"; }
+service_action() { systemctl "$@"; }
+
+ensure_nft_base() {
+  nft list table ip sk5_panel >/dev/null 2>&1 || nft add table ip sk5_panel
+  nft list chain ip sk5_panel postrouting >/dev/null 2>&1 || nft 'add chain ip sk5_panel postrouting { type nat hook postrouting priority srcnat; policy accept; }'
+  nft list chain ip sk5_panel forward >/dev/null 2>&1 || nft 'add chain ip sk5_panel forward { type filter hook forward priority filter; policy accept; }'
+}
+
+remove_nft_chain() {
+  local chain="$1"
+  nft list chain ip sk5_panel "$chain" >/dev/null 2>&1 && nft delete chain ip sk5_panel "$chain" || true
+}
+
+remove_nft_comment() {
+  local chain="$1" comment="$2" handle
+  while read -r handle; do
+    [[ -n "$handle" ]] && nft delete rule ip sk5_panel "$chain" handle "$handle" || true
+  done < <(nft -a list chain ip sk5_panel "$chain" 2>/dev/null | awk -v marker="comment \"$comment\"" '$0 ~ marker {for(i=1;i<=NF;i++) if($i=="handle") print $(i+1)}')
+}
+
+setup_l2tp_namespace() {
+  local namespace host_veth namespace_veth host_ip namespace_ip cidr chain
+  namespace="$(jqv '.namespace')"
+  host_veth="$(jqv '.hostVeth')"
+  namespace_veth="$(jqv '.namespaceVeth')"
+  host_ip="$(jqv '.hostIp')"
+  namespace_ip="$(jqv '.namespaceIp')"
+  cidr="$(jqv '.cidr')"
+  chain="l2tp_$(printf '%s' "$ID" | tr '-' '_')"
+
+  ip netns list | grep -q "^${namespace} " || ip netns add "$namespace"
+  if ! ip link show "$host_veth" >/dev/null 2>&1; then
+    ip link add "$host_veth" type veth peer name "$namespace_veth"
+    ip link set "$namespace_veth" netns "$namespace"
+  fi
+  ip address replace "$host_ip/$cidr" dev "$host_veth"
+  ip link set "$host_veth" up
+  ip -n "$namespace" address replace "$namespace_ip/$cidr" dev "$namespace_veth"
+  ip -n "$namespace" link set lo up
+  ip -n "$namespace" link set "$namespace_veth" up
+  ip -n "$namespace" route replace default via "$host_ip" dev "$namespace_veth"
+  sysctl -q -w net.ipv4.ip_forward=1
+
+  ensure_nft_base
+  remove_nft_comment postrouting "$chain"
+  nft "add rule ip sk5_panel postrouting ip saddr $namespace_ip/32 masquerade comment \"$chain\""
+}
+
+render_l2tp_config() {
+  local server server_ip username password mtu namespace host_ip namespace_veth
+  server="$(jqv '.server')"
+  server_ip="$(getent ahostsv4 "$server" | awk 'NR==1 {print $1}')"
+  [[ -n "$server_ip" ]] || fail "cannot resolve L2TP server"
+  username="$(jqv '.username')"
+  password="$(jqv '.password')"
+  mtu="$(jqv '.mtu')"
+  namespace="$(jqv '.namespace')"
+  host_ip="$(jqv '.hostIp')"
+  namespace_veth="$(jqv '.namespaceVeth')"
+  ip -n "$namespace" route replace "$server_ip/32" via "$host_ip" dev "$namespace_veth"
+  ip -n "$namespace" route del default via "$host_ip" dev "$namespace_veth" >/dev/null 2>&1 || true
+  ip -n "$namespace" route replace unreachable default metric 42760
+  umask 077
+  cat >"$DIR/ppp-options" <<EOF
+name $username
+password $password
+noauth
+defaultroute
+replacedefaultroute
+usepeerdns
+persist
+maxfail 0
+holdoff 5
+lcp-echo-interval 15
+lcp-echo-failure 4
+mtu $mtu
+mru $mtu
+ipparam $ID
+EOF
+  cat >"$DIR/xl2tpd.conf" <<EOF
+[global]
+port = 1701
+
+[lac sk5]
+lns = $server
+pppoptfile = $DIR/ppp-options
+autodial = yes
+redial = yes
+redial timeout = 5
+max redials = 0
+length bit = yes
+EOF
+}
+
+setup_direct_proxy_route() {
+  local ip iface gateway table priority
+  ip="$(jqv '.expectedIp')"
+  iface="$(jqv '.interface')"
+  gateway="$(jqv '.gateway')"
+  table="$(jqv '.routeTable')"
+  priority="$(jqv '.routePriority')"
+  ip -4 address show dev "$iface" | grep -q "inet $ip/" || fail "public IP is not assigned to interface"
+  if [[ -z "$gateway" || "$gateway" == "null" ]]; then
+    gateway="$(ip -4 route show default dev "$iface" | awk 'NR==1 {print $3}')"
+  fi
+  [[ -n "$gateway" ]] || fail "default gateway not found"
+  ip -4 route replace table "$table" default via "$gateway" dev "$iface" onlink src "$ip"
+  ip -4 rule del priority "$priority" >/dev/null 2>&1 || true
+  ip -4 rule add priority "$priority" from "$ip/32" table "$table"
+  ip -4 route flush cache
+}
+
+remove_direct_proxy_route() {
+  local table priority
+  table="$(jqv '.routeTable')"
+  priority="$(jqv '.routePriority')"
+  ip -4 rule del priority "$priority" >/dev/null 2>&1 || true
+  ip -4 route flush table "$table" >/dev/null 2>&1 || true
+  ip -4 route flush cache >/dev/null 2>&1 || true
+}
+
+setup_l2tp_proxy_relay() {
+  local namespace ppp_interface
+  namespace="$(jqv '.l2tpNamespace')"
+  ip netns list | grep -q "^${namespace} " || fail "L2TP namespace is not running"
+  ppp_interface="$(ip -n "$namespace" -o -4 address show | awk '$2 ~ /^ppp/ {print $2; exit}')"
+  [[ -n "$ppp_interface" ]] || fail "L2TP PPP interface is not running"
+  ip -n "$namespace" route show default dev "$ppp_interface" | grep -q '^default' || fail "L2TP PPP default route is not active"
+}
+
+remove_proxy_network() {
+  local type
+  type="$(jqv '.outboundType')"
+  systemctl stop "sk5-relay@$ID.service" >/dev/null 2>&1 || true
+  [[ "$type" == "public-ip" ]] && remove_direct_proxy_route || true
+}
+
+proxy_exec() {
+  local type namespace
+  type="$(jqv '.outboundType')"
+  if [[ "$type" == "l2tp" ]]; then
+    setup_l2tp_proxy_relay
+    namespace="$(jqv '.l2tpNamespace')"
+    exec ip netns exec "$namespace" /usr/bin/3proxy "$DIR/3proxy.cfg"
+  fi
+  setup_direct_proxy_route
+  exec /usr/bin/3proxy "$DIR/3proxy.cfg"
+}
+
+proxy_relay() {
+  local listen_ip port target_ip
+  listen_ip="$(jqv '.listenIp')"
+  port="$(jqv '.port')"
+  target_ip="$(jqv '.l2tpProxyIp')"
+  exec /usr/bin/socat "TCP4-LISTEN:$port,bind=$listen_ip,reuseaddr,fork" "TCP4:$target_ip:$port"
+}
+
+proxy_action() {
+  local type
+  type="$(jqv '.outboundType')"
+  case "$ACTION" in
+    start)
+      if [[ "$type" == "public-ip" ]]; then setup_direct_proxy_route; else setup_l2tp_proxy_relay; fi
+      service_action enable --now "sk5-proxy@$ID.service"
+      [[ "$type" == "l2tp" ]] && service_action enable --now "sk5-relay@$ID.service" || true
+      ;;
+    stop)
+      service_action disable --now "sk5-proxy@$ID.service" >/dev/null 2>&1 || true
+      remove_proxy_network
+      ;;
+    restart)
+      remove_proxy_network
+      if [[ "$type" == "public-ip" ]]; then setup_direct_proxy_route; else setup_l2tp_proxy_relay; fi
+      service_action enable "sk5-proxy@$ID.service"
+      service_action restart "sk5-proxy@$ID.service"
+      if [[ "$type" == "l2tp" ]]; then
+        service_action enable "sk5-relay@$ID.service"
+        service_action restart "sk5-relay@$ID.service"
+      fi
+      ;;
+    delete)
+      service_action disable --now "sk5-proxy@$ID.service" >/dev/null 2>&1 || true
+      remove_proxy_network
+      ;;
+    exec) proxy_exec ;;
+    relay) proxy_relay ;;
+    *) fail "invalid proxy action" ;;
+  esac
+}
+
+l2tp_exec() {
+  local namespace
+  setup_l2tp_namespace
+  render_l2tp_config
+  namespace="$(jqv '.namespace')"
+  exec ip netns exec "$namespace" /usr/sbin/xl2tpd -D -c "$DIR/xl2tpd.conf" -p "$DIR/xl2tpd.pid" -C "$DIR/l2tp-control"
+}
+
+l2tp_action() {
+  local namespace host_veth chain
+  namespace="$(jqv '.namespace')"
+  host_veth="$(jqv '.hostVeth')"
+  chain="l2tp_$(printf '%s' "$ID" | tr '-' '_')"
+  case "$ACTION" in
+    connect|reconnect)
+      [[ "$ACTION" == "reconnect" ]] && systemctl stop "sk5-l2tp@$ID.service" >/dev/null 2>&1 || true
+      setup_l2tp_namespace
+      render_l2tp_config
+      systemctl enable "sk5-l2tp@$ID.service"
+      systemctl restart "sk5-l2tp@$ID.service"
+      local ppp_interface local_ip actual_ip
+      ppp_interface=""
+      for _ in $(seq 1 60); do
+        ppp_interface="$(ip -n "$namespace" -o -4 address show | awk '$2 ~ /^ppp/ {print $2; exit}')"
+        [[ -n "$ppp_interface" ]] && break
+        sleep 0.5
+      done
+      [[ -n "$ppp_interface" ]] || fail "PPP interface did not come online"
+      local_ip="$(ip -n "$namespace" -o -4 address show dev "$ppp_interface" | awk 'NR==1 {split($4,a,"/"); print a[1]}')"
+      actual_ip="$(ip netns exec "$namespace" curl --silent --show-error --max-time 8 https://api.ipify.org || true)"
+      jq -n --arg interface "$ppp_interface" --arg localIp "$local_ip" --arg actualIp "$actual_ip" '{interface:$interface,localIp:$localIp,actualIp:$actualIp}'
+      ;;
+    disconnect)
+      systemctl disable --now "sk5-l2tp@$ID.service" >/dev/null 2>&1 || true
+      ip -n "$namespace" route replace unreachable default metric 42760 >/dev/null 2>&1 || true
+      ;;
+    delete)
+      systemctl disable --now "sk5-l2tp@$ID.service" >/dev/null 2>&1 || true
+      remove_nft_comment postrouting "$chain"
+      ip link delete "$host_veth" >/dev/null 2>&1 || true
+      ip netns delete "$namespace" >/dev/null 2>&1 || true
+      ;;
+    exec) l2tp_exec ;;
+    *) fail "invalid l2tp action" ;;
+  esac
+}
+
+if [[ "$RESOURCE" == "proxy" ]]; then proxy_action; else l2tp_action; fi

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f5f3ff">
+  <title>sk5面板</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span class="brand-spark"></span>
+          <span class="brand-glyph">S5</span>
+        </div>
+        <div><strong>sk5面板</strong><span>Secure Network</span></div>
+      </div>
+      <nav class="nav-list" aria-label="主导航">
+        <button class="nav-item active" data-view="overview"><i data-lucide="layout-dashboard"></i><span>运行总览</span></button>
+        <button class="nav-item" data-view="proxies"><i data-lucide="shield-check"></i><span>SOCKS5 实例</span><b id="nav-proxy-count">0</b></button>
+        <button class="nav-item" data-view="public-ips"><i data-lucide="globe-2"></i><span>服务器公网 IP</span><b id="nav-ip-count">0</b></button>
+        <button class="nav-item" data-view="l2tp"><i data-lucide="waypoints"></i><span>L2TP 连接</span><b id="nav-l2tp-count">0</b></button>
+        <button class="nav-item" data-view="interfaces"><i data-lucide="ethernet-port"></i><span>网络接口</span></button>
+        <button class="nav-item" data-view="logs"><i data-lucide="scroll-text"></i><span>事件日志</span></button>
+        <button class="nav-item" data-view="settings"><i data-lucide="settings-2"></i><span>系统设置</span></button>
+      </nav>
+      <div class="sidebar-status">
+        <div class="status-pulse"></div>
+        <div><span>控制节点</span><strong id="side-mode">只读模式</strong></div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="avatar" aria-hidden="true"><span>S5</span></div>
+        <div><strong>Administrator</strong><span>超级管理员</span></div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-title">
+          <button class="icon-button mobile-menu" id="mobile-menu" aria-label="打开导航"><i data-lucide="menu"></i></button>
+          <div><h1 id="page-title">运行总览</h1><p id="page-subtitle">查看代理出口校验与网络状态</p></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="mode-chip"><span></span><b id="mode-label">只读模式</b></div>
+          <button class="primary-button" id="header-create"><i data-lucide="plus"></i><span>创建实例</span></button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="readiness-banner" id="readiness-banner" aria-live="polite"></section>
+        <section class="view active" id="view-overview">
+          <div class="kpi-grid" id="kpi-grid"></div>
+          <div class="overview-grid">
+            <article class="glass-card chart-panel">
+              <div class="panel-head"><div><span class="eyebrow">TRAFFIC FLOW</span><h2>24 小时流量趋势</h2></div><div class="legend"><span><i class="legend-in"></i>入口</span><span><i class="legend-out"></i>出口</span></div></div>
+              <div class="traffic-chart" id="traffic-chart" role="img" aria-label="24小时代理流量趋势图"></div>
+            </article>
+            <article class="glass-card health-panel">
+              <div class="panel-head"><div><span class="eyebrow">NETWORK HEALTH</span><h2>网络健康度</h2></div><span class="status-badge warning" id="health-state">等待真实数据</span></div>
+              <div class="health-ring"><div><strong id="health-score">--</strong><span>综合评分</span></div></div>
+              <div class="health-list" id="health-list"></div>
+            </article>
+          </div>
+          <div class="section-heading"><div><span class="eyebrow">LIVE INSTANCES</span><h2>代理运行状态</h2></div><button class="text-button" data-go="proxies">查看全部 <i data-lucide="arrow-right"></i></button></div>
+          <div class="proxy-cards" id="overview-proxies"></div>
+          <div class="overview-bottom">
+            <article class="glass-card compact-table-card"><div class="panel-head"><div><span class="eyebrow">PUBLIC IP POOL</span><h2>公网 IP 资源</h2></div><button class="icon-button" data-go="public-ips" aria-label="查看公网IP池"><i data-lucide="external-link"></i></button></div><div id="overview-ips"></div></article>
+            <article class="glass-card compact-table-card"><div class="panel-head"><div><span class="eyebrow">RECENT EVENTS</span><h2>最近事件</h2></div><button class="icon-button" data-go="logs" aria-label="查看事件日志"><i data-lucide="external-link"></i></button></div><div id="overview-logs"></div></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-proxies">
+          <div class="page-toolbar">
+            <div class="search-box"><i data-lucide="search"></i><input id="proxy-search" type="search" placeholder="搜索名称、IP、端口或用户名"></div>
+            <div class="toolbar-actions"><select id="proxy-status-filter" class="select-control" aria-label="状态筛选"><option value="all">全部状态</option><option value="online">运行中</option><option value="stopped">已停止</option><option value="mismatch">出口异常</option></select><button class="secondary-button" id="check-all-proxies"><i data-lucide="activity"></i>校验全部出口</button><button class="primary-button" data-open="proxy"><i data-lucide="plus"></i>创建实例</button></div>
+          </div>
+          <div class="table-shell"><div class="table-wrap"><table><thead><tr><th>实例</th><th>监听地址</th><th>认证凭据</th><th>专属出口</th><th>校验状态</th><th>运行指标</th><th class="right">操作</th></tr></thead><tbody id="proxy-table"></tbody></table></div><div class="table-footer" id="proxy-footer"></div></div>
+        </section>
+
+        <section class="view" id="view-public-ips">
+          <div class="page-toolbar">
+            <div class="search-box"><i data-lucide="search"></i><input id="ip-search" type="search" placeholder="搜索服务器公网 IP、网卡或绑定实例"></div>
+            <div class="toolbar-actions"><select id="ip-status-filter" class="select-control" aria-label="IP状态筛选"><option value="all">全部状态</option><option value="available">可分配</option><option value="assigned">已分配</option><option value="online">运行中</option></select><button class="primary-button" id="scan-network"><i data-lucide="radar"></i>检测服务器 IP</button></div>
+          </div>
+          <div class="resource-summary" id="ip-summary"></div>
+          <div class="table-shell"><div class="table-wrap"><table><thead><tr><th>公网 IP</th><th>服务器网卡</th><th>检测方式</th><th>实测出口</th><th>分配状态</th><th class="right">操作</th></tr></thead><tbody id="ip-table"></tbody></table></div><div class="table-footer" id="ip-footer"></div></div>
+        </section>
+
+        <section class="view" id="view-l2tp">
+          <div class="page-toolbar"><div class="page-intro"><strong>L2TP 出口线路</strong><span>每条线路可独立绑定 SOCKS5 实例，重拨后自动重新校验出口</span></div><button class="primary-button" data-open="l2tp"><i data-lucide="plus"></i>添加连接</button></div>
+          <div class="l2tp-grid" id="l2tp-grid"></div>
+        </section>
+
+        <section class="view" id="view-interfaces">
+          <div class="page-toolbar"><div class="page-intro"><strong>网络接口自动检测</strong><span>识别物理网卡、虚拟接口、PPP、内网地址与默认路由</span></div><button class="primary-button" id="refresh-interfaces"><i data-lucide="refresh-cw"></i>重新检测</button></div>
+          <div class="interface-grid" id="interface-grid"></div>
+        </section>
+
+        <section class="view" id="view-logs">
+          <div class="page-toolbar"><div class="search-box"><i data-lucide="search"></i><input id="log-search" type="search" placeholder="搜索事件内容"></div><div class="toolbar-actions"><select id="log-level-filter" class="select-control" aria-label="日志级别"><option value="all">全部级别</option><option value="success">成功</option><option value="info">信息</option><option value="warning">警告</option><option value="error">错误</option></select><button class="secondary-button" id="export-logs"><i data-lucide="download"></i>导出日志</button></div></div>
+          <div class="timeline" id="log-timeline"></div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <form id="settings-form">
+            <div class="settings-section"><div class="settings-copy"><span class="eyebrow">FAIL-CLOSED POLICY</span><h2>出口故障策略</h2><p>控制 SOCKS5 出口校验失败时的流量处理。</p></div><div class="settings-fields">
+              <label class="switch-row"><div><strong>出口异常立即阻断</strong><span>禁止代理静默回落到服务器主出口</span></div><input name="failClosed" type="checkbox" class="switch"></label>
+            </div></div>
+            <div class="settings-section"><div class="settings-copy"><span class="eyebrow">ACCESS CONTROL</span><h2>面板访问控制</h2><p>限制能够访问管理端的来源网络，一行一个 CIDR。</p></div><div class="settings-fields"><label class="wide-field"><span>管理员 IP 白名单</span><textarea class="input-control" name="panelAllowlist" rows="5" placeholder="10.0.0.0/24&#10;192.168.1.8/32"></textarea></label><div class="security-note"><i data-lucide="shield-alert"></i><span>生产模式建议仅通过 HTTPS 或内网 VPN 访问管理面板。</span></div></div></div>
+            <div class="settings-actions"><span id="settings-save-state"></span><button class="primary-button" type="submit"><i data-lucide="save"></i>保存设置</button></div>
+          </form>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="modal-overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head"><div><span class="eyebrow" id="modal-eyebrow">NEW RESOURCE</span><h2 id="modal-title">创建资源</h2></div><button class="icon-button" id="modal-close" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <form id="modal-form"><div id="modal-body"></div><div class="modal-actions"><button class="secondary-button" type="button" id="modal-cancel">取消</button><button class="primary-button" type="submit" id="modal-submit"><i data-lucide="check"></i><span>确认创建</span></button></div></form>
+    </div>
+  </div>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

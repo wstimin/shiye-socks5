@@ -1,0 +1,41 @@
+FROM node:20-bookworm-slim
+
+LABEL org.opencontainers.image.title="sk5面板"
+LABEL org.opencontainers.image.description="Dedicated public IP and L2TP SOCKS5 management panel"
+LABEL org.opencontainers.image.source="https://github.com/wstimin/shiye-socks5"
+
+ENV NODE_ENV=production \
+    PORT=8787 \
+    SK5_PANEL_DATA=/var/lib/sk5-panel \
+    SK5_PANEL_HELPER=/usr/local/libexec/sk5-panel-host-exec
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      3proxy curl iproute2 jq nftables ppp socat sudo systemd util-linux xl2tpd \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 sk5panel \
+    && useradd --uid 10001 --gid 10001 --home-dir /var/lib/sk5-panel --shell /usr/sbin/nologin sk5panel \
+    && install -d -o sk5panel -g sk5panel -m 0750 /var/lib/sk5-panel /usr/local/libexec
+
+WORKDIR /opt/sk5-panel
+
+COPY --chown=root:root package.json ./
+COPY --chown=root:root src ./src
+COPY --chown=root:root public ./public
+COPY --chown=root:root deploy ./deploy
+COPY --chown=root:root deploy/docker/sk5-panel-host-exec /usr/local/libexec/sk5-panel-host-exec
+COPY --chown=root:root deploy/docker/sk5-panel-container.sudoers /etc/sudoers.d/sk5-panel-container
+
+RUN chmod 0755 /usr/local/libexec/sk5-panel-host-exec \
+    && chmod 0440 /etc/sudoers.d/sk5-panel-container \
+    && visudo -cf /etc/sudoers.d/sk5-panel-container \
+    && chmod -R go-w /opt/sk5-panel
+
+USER sk5panel
+
+EXPOSE 8787
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl --silent --fail --user "${SK5_PANEL_ADMIN_USER}:${SK5_PANEL_ADMIN_PASSWORD}" "http://127.0.0.1:${PORT}/api/bootstrap" >/dev/null || exit 1
+
+CMD ["node", "src/server.js"]
