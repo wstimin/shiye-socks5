@@ -51,6 +51,6 @@ USER sk5panel
 EXPOSE 8787
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl --silent --fail --user "${SK5_PANEL_ADMIN_USER}:${SK5_PANEL_ADMIN_PASSWORD}" "http://127.0.0.1:${PORT}/api/bootstrap" >/dev/null || exit 1
+  CMD curl --silent --fail "http://127.0.0.1:${PORT}/api/health" >/dev/null || exit 1
 
 CMD ["node", "src/server.js"]

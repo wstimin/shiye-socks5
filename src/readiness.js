@@ -25,6 +25,7 @@ export async function evaluateReadiness({
   platform = process.platform,
   env = process.env,
   network,
+  authConfigured = true,
   helper = env.SK5_PANEL_HELPER || '/usr/local/libexec/sk5-panel-helper',
   fileExists = (file) => fs.existsSync(file),
   canExecute = (file) => {
@@ -47,7 +48,7 @@ export async function evaluateReadiness({
   const applyRequested = env.SK5_PANEL_APPLY === 'true';
   checks.push(check('apply', applyRequested, '生产执行开关', applyRequested ? 'SK5_PANEL_APPLY 已启用' : 'SK5_PANEL_APPLY 未启用'));
 
-  const authenticated = Boolean(env.SK5_PANEL_ADMIN_PASSWORD);
+  const authenticated = Boolean(authConfigured);
   checks.push(check('auth', authenticated, '管理员认证', authenticated ? '已配置管理员密码' : '未配置管理员密码'));
 
   const probeEnabled = env.SK5_PANEL_ALLOW_PROBE === 'true';

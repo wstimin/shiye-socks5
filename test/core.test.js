@@ -11,6 +11,7 @@ import { SystemManager } from '../src/system-manager.js';
 import { assertCidr, assertCredential, assertPort, assertPublicIPv4, isIPv4InCidr } from '../src/validators.js';
 import { render3ProxyConfig } from '../src/proxy-config.js';
 import { allocateL2tpNetwork, allocateProxyRouting, ensureResourceAllocations, namespaceNetwork } from '../src/resource-allocation.js';
+import { AuthManager, LoginLimiter, parseCookies, validateAdminUsername, validateNewAdminPassword } from '../src/auth.js';
 
 test('classifies common IPv4 ranges', () => {
   assert.equal(classifyIPv4('10.1.2.3'), 'private');
@@ -30,6 +31,44 @@ test('encrypts secrets and decrypts them with the same key', () => {
   const encrypted = encryptSecret('client-password', key);
   assert.notEqual(encrypted, 'client-password');
   assert.equal(decryptSecret(encrypted, key), 'client-password');
+});
+
+test('administrator credentials are hashed and sessions can be revoked after an update', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sk5-auth-'));
+  const auth = new AuthManager(root, { username: 'admin', password: 'admin' });
+  assert.equal(auth.verify('admin', 'admin'), true);
+  assert.equal(auth.verify('admin', 'wrong'), false);
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'auth.json'), 'utf8'), /"password"\s*:\s*"admin"/);
+  const oldSession = auth.createSession();
+  assert.equal(auth.getSession(oldSession.token).username, 'admin');
+  const newSession = auth.updateCredentials({ currentPassword: 'admin', username: 'operator', newPassword: 'StrongPass88' });
+  assert.equal(auth.getSession(oldSession.token), null);
+  assert.equal(auth.verify('admin', 'admin'), false);
+  assert.equal(auth.verify('operator', 'StrongPass88'), true);
+  assert.equal(auth.getSession(newSession.token).username, 'operator');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('administrator credential file rejects malformed password hashes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sk5-auth-invalid-'));
+  fs.writeFileSync(path.join(root, 'auth.json'), JSON.stringify({ username: 'admin', passwordHash: 'scrypt$invalid$invalid' }));
+  assert.throws(() => new AuthManager(root), /管理员凭据文件无效/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('administrator input, cookies and login throttling are validated', () => {
+  assert.equal(validateAdminUsername('admin_01'), 'admin_01');
+  assert.throws(() => validateAdminUsername('admin user'));
+  assert.equal(validateNewAdminPassword('StrongPass88'), 'StrongPass88');
+  assert.throws(() => validateNewAdminPassword('short'));
+  assert.deepEqual(parseCookies('sk5_session=abc123; theme=light'), { sk5_session: 'abc123', theme: 'light' });
+  let now = 1000;
+  const limiter = new LoginLimiter({ now: () => now, maxAttempts: 2, windowMs: 1000, lockMs: 2000 });
+  limiter.failure('1.2.3.4');
+  limiter.failure('1.2.3.4');
+  assert.throws(() => limiter.assertAllowed('1.2.3.4'), (error) => error.statusCode === 429);
+  now += 2001;
+  assert.doesNotThrow(() => limiter.assertAllowed('1.2.3.4'));
 });
 
 test('every new store starts empty without preview resources', () => {
@@ -215,5 +254,8 @@ test('container deployment keeps the panel unprivileged and delegates fixed host
   assert.match(installer, /ghcr\.io\/wstimin\/shiye-socks5:latest/);
   assert.match(installer, /apt-cache show 3proxy/);
   assert.match(installer, /Makefile\.Linux/);
-  assert.match(installer, /system\.ready \/\/ false/);
+  assert.match(installer, /SK5_PANEL_ADMIN_PASSWORD:-admin/);
+  assert.match(installer, /\/api\/health/);
+  assert.match(installer, /AUTH_ALREADY_CONFIGURED/);
+  assert.match(dockerfile, /\/api\/health/);
 });

@@ -30,6 +30,16 @@ ip -4 route
 curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-socks5/main/deploy/install.sh | sudo bash
 ```
 
+新安装的默认登录信息：
+
+```text
+用户名：admin
+密码：admin
+```
+
+首次登录后必须进入“系统设置 -> 管理员账户”修改默认用户名和密码。保存后，除当前浏览器外的其他管理员会话会立即失效。
+`/root/sk5-panel-credentials.txt` 只记录安装时的初始凭据，后台修改后的密码仅以 scrypt 哈希形式保存在 `/var/lib/sk5-panel/auth.json`。
+
 安装器会：
 
 1. 校验 Ubuntu/Debian 版本。
@@ -37,9 +47,9 @@ curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-socks5/main/deploy/in
 3. 拉取 `ghcr.io/wstimin/shiye-socks5:latest`。
 4. 从镜像提取同版本的 root helper 和 systemd 实例模板。
 5. 创建 `/var/lib/sk5-panel` 持久化目录。
-6. 生成管理员随机密码。
+6. 首次安装初始化管理员登录信息，默认 `admin/admin`。
 7. 注册并启动 `sk5-panel.service`。
-8. 调用 `/api/bootstrap`，只有生产就绪检查通过才报告安装成功。
+8. 调用 `/api/health`，只有生产就绪检查通过才报告安装成功。
 
 ## 4. 自定义参数
 
@@ -56,11 +66,11 @@ sudo env \
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `SK5_PANEL_PORT` | `8787` | 面板监听端口 |
-| `SK5_PANEL_ADMIN_USER` | `admin` | HTTP Basic 管理员用户名 |
-| `SK5_PANEL_ADMIN_PASSWORD` | 随机 32 位十六进制 | 管理员密码 |
+| `SK5_PANEL_ADMIN_USER` | `admin` | 首次启动时写入的管理员用户名；可在后台修改 |
+| `SK5_PANEL_ADMIN_PASSWORD` | `admin` | 首次启动时写入的管理员密码；可在后台修改 |
 | `SK5_PANEL_IMAGE` | `ghcr.io/wstimin/shiye-socks5:latest` | 要部署的镜像 |
 
-重复运行安装脚本视为重装或升级。未显式传入用户名和密码时，会保留原凭据及全部面板数据。
+重复运行安装脚本视为重装或升级。管理员凭据初始化后保存在 `/var/lib/sk5-panel/auth.json`，后台修改不会将明文密码写入面板状态；已有认证文件时会保留后台当前账户且不覆盖初始凭据文件，旧版本升级时则使用原环境变量凭据完成首次迁移。
 
 ## 5. 安装后的文件
 

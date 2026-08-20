@@ -10,6 +10,7 @@ import { assertCidr, assertCredential, assertEnum, assertHost, assertIPv4, asser
 import { SystemManager } from './system-manager.js';
 import { allocateL2tpNetwork, allocateProxyRouting } from './resource-allocation.js';
 import { evaluateReadiness, requireProductionReady } from './readiness.js';
+import { AuthManager, LoginLimiter, parseCookies, validateAdminUsername, validateNewAdminPassword } from './auth.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(currentDir, '..');
@@ -18,8 +19,11 @@ const dataDir = process.env.SK5_PANEL_DATA || path.join(rootDir, 'data');
 const store = new Store(dataDir);
 const port = Number(process.env.PORT || 8787);
 const systemManager = new SystemManager({ dataDir, applyMode: false });
-const adminUser = process.env.SK5_PANEL_ADMIN_USER || 'admin';
-const adminPassword = process.env.SK5_PANEL_ADMIN_PASSWORD || '';
+const auth = new AuthManager(dataDir, {
+  username: process.env.SK5_PANEL_ADMIN_USER || 'admin',
+  password: process.env.SK5_PANEL_ADMIN_PASSWORD || 'admin'
+});
+const loginLimiter = new LoginLimiter();
 let currentNetwork = await detectNetwork();
 let currentReadiness = await evaluateReadiness({ network: currentNetwork });
 systemManager.applyMode = currentReadiness.ready;
@@ -37,22 +41,31 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function isAuthorized(request) {
-  if (!adminPassword) return ['127.0.0.1', '::1'].includes(requestIPv4(request));
-  const header = request.headers.authorization || '';
-  if (!header.startsWith('Basic ')) return false;
-  const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
-  const separator = decoded.indexOf(':');
-  if (separator < 0) return false;
-  const username = decoded.slice(0, separator);
-  const password = decoded.slice(separator + 1);
-  const usernameBuffer = Buffer.from(username);
-  const adminUserBuffer = Buffer.from(adminUser);
-  const passwordBuffer = Buffer.from(password);
-  const adminPasswordBuffer = Buffer.from(adminPassword);
-  const userMatch = usernameBuffer.length === adminUserBuffer.length && crypto.timingSafeEqual(usernameBuffer, adminUserBuffer);
-  const passwordMatch = passwordBuffer.length === adminPasswordBuffer.length && crypto.timingSafeEqual(passwordBuffer, adminPasswordBuffer);
-  return userMatch && passwordMatch;
+function sessionToken(request) {
+  return parseCookies(request.headers.cookie).sk5_session || '';
+}
+
+function currentSession(request) {
+  return auth.getSession(sessionToken(request));
+}
+
+function isSecureRequest(request) {
+  return Boolean(request.socket.encrypted) || process.env.SK5_PANEL_SECURE_COOKIE === 'true';
+}
+
+function sessionCookie(request, token, maxAge = 12 * 60 * 60) {
+  return `sk5_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isSecureRequest(request) ? '; Secure' : ''}`;
+}
+
+function requireCsrf(request, session) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
+  const providedBuffer = Buffer.from(String(request.headers['x-csrf-token'] || ''));
+  const expectedBuffer = Buffer.from(session?.csrf || '');
+  if (!providedBuffer.length || providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) {
+    const error = new Error('安全令牌已失效，请刷新页面后重试');
+    error.statusCode = 403;
+    throw error;
+  }
 }
 
 function requestIPv4(request) {
@@ -95,7 +108,8 @@ function systemInfo(network, readiness = currentReadiness) {
     networkSource: network.source,
     hostname: process.env.HOSTNAME || process.env.COMPUTERNAME || 'sk5-gateway',
     version: '0.1.0',
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    adminUser: auth.username
   };
 }
 
@@ -279,6 +293,17 @@ async function handleApi(request, response, url) {
   const parts = url.pathname.split('/').filter(Boolean);
   if (request.method === 'GET' && url.pathname === '/api/bootstrap') {
     return sendJson(response, 200, await bootstrap());
+  }
+  if (request.method === 'PUT' && url.pathname === '/api/auth/credentials') {
+    const body = await readJson(request);
+    const currentPassword = String(body.currentPassword || '');
+    const username = validateAdminUsername(body.username);
+    const newPassword = validateNewAdminPassword(body.newPassword);
+    if (newPassword !== String(body.confirmPassword || '')) throw new Error('两次输入的新密码不一致');
+    const session = auth.updateCredentials({ currentPassword, username, newPassword });
+    store.log('warning', 'audit', `管理员登录账号已修改为 ${username}`);
+    response.setHeader('Set-Cookie', sessionCookie(request, session.token));
+    return sendJson(response, 200, { ok: true, username, csrfToken: session.csrf });
   }
   if (request.method === 'POST' && url.pathname === '/api/network/scan') {
     const { network, readiness } = await refreshEnvironment({ scan: true });
@@ -484,13 +509,59 @@ function serveStatic(response, url) {
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   try {
-    if (!isAuthorized(request)) {
-      response.writeHead(401, { 'WWW-Authenticate': 'Basic realm="sk5面板", charset="UTF-8"' });
-      response.end('Authentication required');
-      return;
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+    if (request.method === 'GET' && url.pathname === '/api/health') {
+      return sendJson(response, 200, { ok: true, ready: currentReadiness.ready, mode: currentReadiness.mode });
     }
+    if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+      if (!isPanelIpAllowed(request)) return sendJson(response, 403, { error: '当前 IP 不在管理员白名单中' });
+      const key = requestIPv4(request);
+      loginLimiter.assertAllowed(key);
+      const body = await readJson(request);
+      if (!auth.verify(String(body.username || ''), String(body.password || ''))) {
+        loginLimiter.failure(key);
+        store.log('warning', 'audit', `管理员登录失败：${key}`);
+        return sendJson(response, 401, { error: '用户名或密码错误' });
+      }
+      loginLimiter.success(key);
+      const session = auth.createSession();
+      response.setHeader('Set-Cookie', sessionCookie(request, session.token));
+      store.log('info', 'audit', `管理员已登录：${key}`);
+      return sendJson(response, 200, { ok: true, username: session.username, csrfToken: session.csrf });
+    }
+
+    const session = currentSession(request);
+    if (request.method === 'GET' && url.pathname === '/api/auth/session') {
+      if (!session) return sendJson(response, 401, { authenticated: false });
+      return sendJson(response, 200, { authenticated: true, username: session.username, csrfToken: session.csrf });
+    }
+    if (!session) {
+      if (!url.pathname.startsWith('/api/') && !['/', '/index.html'].includes(url.pathname)) return serveStatic(response, url);
+      if (!url.pathname.startsWith('/api/')) {
+        response.writeHead(302, { Location: '/login.html' });
+        response.end();
+        return;
+      }
+      return sendJson(response, 401, { error: '登录已失效，请重新登录' });
+    }
+    if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
+      requireCsrf(request, session);
+      auth.revoke(sessionToken(request));
+      response.setHeader('Set-Cookie', sessionCookie(request, '', 0));
+      return sendJson(response, 200, { ok: true });
+    }
+    requireCsrf(request, session);
     if (!isPanelIpAllowed(request)) {
       sendJson(response, 403, { error: '当前 IP 不在管理员白名单中' });
+      return;
+    }
+    if (url.pathname === '/login.html') {
+      response.writeHead(302, { Location: '/' });
+      response.end();
       return;
     }
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url);

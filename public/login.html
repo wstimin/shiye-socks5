@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#eef2ff">
+  <title>登录 - sk5面板</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-identity" aria-label="sk5面板">
+      <div class="login-brand">
+        <div class="brand-mark login-brand-mark" aria-hidden="true"><span class="brand-spark"></span><span class="brand-glyph">S5</span></div>
+        <div><strong>sk5面板</strong><span>Secure Network Console</span></div>
+      </div>
+      <div class="login-signal" aria-hidden="true">
+        <span class="signal-core">S5</span>
+        <i class="signal-ring ring-one"></i>
+        <i class="signal-ring ring-two"></i>
+        <i class="signal-ring ring-three"></i>
+        <b class="signal-node node-one"></b>
+        <b class="signal-node node-two"></b>
+        <b class="signal-node node-three"></b>
+      </div>
+      <div class="login-identity-copy"><span>SERVER CONTROL</span><strong>专属出口控制中心</strong><p>管理真实 SOCKS5、公网 IP 与 L2TP 出口。</p></div>
+    </section>
+
+    <section class="login-panel">
+      <form class="login-form" id="login-form">
+        <div class="login-heading"><span class="eyebrow">ADMIN ACCESS</span><h1>登录管理面板</h1><p>请输入管理员账号继续。</p></div>
+        <label><span>用户名</span><div class="login-input"><i data-lucide="user-round"></i><input name="username" autocomplete="username" required autofocus value="admin"></div></label>
+        <label><span>密码</span><div class="login-input"><i data-lucide="key-round"></i><input name="password" type="password" autocomplete="current-password" required><button type="button" class="login-eye" id="toggle-password" title="显示密码"><i data-lucide="eye"></i></button></div></label>
+        <div class="login-error" id="login-error" role="alert"></div>
+        <button class="primary-button login-submit" type="submit"><i data-lucide="log-in"></i><span>登录</span></button>
+        <p class="login-security"><i data-lucide="shield-check"></i><span>登录会话仅保存在当前浏览器，请在生产环境启用 HTTPS。</span></p>
+      </form>
+    </section>
+  </main>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script type="module" src="/login.js"></script>
+</body>
+</html>

@@ -14,6 +14,8 @@ sk5面板是在单台 Linux 服务器上管理真实 SOCKS5 实例、公网 IP �
 - PPP 断开后保持不可达默认路由，避免静默回落到服务器主出口。
 - 通过 SOCKS5 实际访问外部探测地址，出口不匹配时自动停止实例。
 - 密码使用 AES-256-GCM 加密保存，可在面板中按需查看和复制。
+- 提供独立管理员登录页，默认账号密码为 `admin/admin`，可在后台修改。
+- 管理员密码使用 scrypt 哈希保存，登录使用 HttpOnly 会话 Cookie、CSRF 校验和失败限速。
 - 面板进程使用非 root 用户；系统操作通过固定 root helper 完成。
 - 支持 Ubuntu 22.04/24.04 和 Debian 12。
 - 提供 amd64、arm64 Docker 镜像及一键安装脚本。
@@ -32,11 +34,20 @@ curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-socks5/main/deploy/in
 ghcr.io/wstimin/shiye-socks5:latest
 ```
 
-安装完成后会输出面板地址、管理员用户名和随机密码。凭据同时保存在仅 root 可读的：
+安装完成后会输出面板地址和默认登录凭据：
+
+```text
+用户名：admin
+密码：admin
+```
+
+首次登录后请立即进入“系统设置 -> 管理员账户”修改用户名和密码。安装时的初始凭据同时保存在仅 root 可读的：
 
 ```text
 /root/sk5-panel-credentials.txt
 ```
+
+该文件只记录安装时的初始凭据；从后台修改登录信息后不会向磁盘写入新的明文密码。服务器已有 `/var/lib/sk5-panel/auth.json` 时，重装或升级会保留后台当前账户，也不会覆盖该初始凭据文件。
 
 详细的部署、升级、备份、卸载和故障排查说明见 [部署文档](docs/DEPLOYMENT.md)。
 

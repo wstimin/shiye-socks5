@@ -4,7 +4,7 @@ set -Eeuo pipefail
 IMAGE="${SK5_PANEL_IMAGE:-ghcr.io/wstimin/shiye-socks5:latest}"
 PORT="${SK5_PANEL_PORT:-8787}"
 ADMIN_USER="${SK5_PANEL_ADMIN_USER:-admin}"
-ADMIN_PASSWORD="${SK5_PANEL_ADMIN_PASSWORD:-}"
+ADMIN_PASSWORD="${SK5_PANEL_ADMIN_PASSWORD:-admin}"
 DATA_DIR="/var/lib/sk5-panel"
 CONFIG_DIR="/etc/sk5-panel"
 SERVICE_DIR="/etc/systemd/system"
@@ -65,13 +65,18 @@ install -d -o root -g root -m 0755 "$CONFIG_DIR" /usr/local/libexec
 install -d -o "$CONTAINER_UID" -g "$CONTAINER_GID" -m 0750 "$DATA_DIR"
 chown -R "$CONTAINER_UID:$CONTAINER_GID" "$DATA_DIR"
 
+AUTH_ALREADY_CONFIGURED=false
+if [[ -f "$DATA_DIR/auth.json" ]]; then
+  AUTH_ALREADY_CONFIGURED=true
+fi
+
 if [[ -f "$CONFIG_DIR/panel.env" ]]; then
   EXISTING_USER="$(sed -n 's/^SK5_PANEL_ADMIN_USER=//p' "$CONFIG_DIR/panel.env" | tail -n 1)"
   EXISTING_PASSWORD="$(sed -n 's/^SK5_PANEL_ADMIN_PASSWORD=//p' "$CONFIG_DIR/panel.env" | tail -n 1)"
   [[ -n "$EXISTING_USER" && "${SK5_PANEL_ADMIN_USER+x}" != x ]] && ADMIN_USER="$EXISTING_USER"
   [[ -n "$EXISTING_PASSWORD" && "${SK5_PANEL_ADMIN_PASSWORD+x}" != x ]] && ADMIN_PASSWORD="$EXISTING_PASSWORD"
 fi
-[[ -n "$ADMIN_PASSWORD" ]] || ADMIN_PASSWORD="$(openssl rand -hex 16)"
+[[ -n "$ADMIN_PASSWORD" ]] || ADMIN_PASSWORD="admin"
 
 log "从镜像提取与当前版本匹配的宿主机组件"
 TEMP_CONTAINER="$(docker create "$IMAGE")"
@@ -109,8 +114,8 @@ systemctl enable --now sk5-panel.service
 
 READY="false"
 for _ in $(seq 1 60); do
-  READY="$(curl --silent --show-error --max-time 3 --user "$ADMIN_USER:$ADMIN_PASSWORD" \
-    "http://127.0.0.1:$PORT/api/bootstrap" | jq -r '.system.ready // false' 2>/dev/null || true)"
+  READY="$(curl --silent --show-error --max-time 3 \
+    "http://127.0.0.1:$PORT/api/health" | jq -r '.ready // false' 2>/dev/null || true)"
   [[ "$READY" == "true" ]] && break
   sleep 1
 done
@@ -124,17 +129,24 @@ fi
 SERVER_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}')"
 [[ -n "$SERVER_IP" ]] || SERVER_IP="服务器IP"
 
-cat >/root/sk5-panel-credentials.txt <<EOF
+if [[ "$AUTH_ALREADY_CONFIGURED" == "false" ]]; then
+  cat >/root/sk5-panel-credentials.txt <<EOF
 URL=http://$SERVER_IP:$PORT
 Username=$ADMIN_USER
 Password=$ADMIN_PASSWORD
 Image=$IMAGE
 EOF
-chmod 0600 /root/sk5-panel-credentials.txt
+  chmod 0600 /root/sk5-panel-credentials.txt
+fi
 
 printf '\n\033[1;32m安装完成，生产执行模式已通过检查。\033[0m\n'
 printf '访问地址: http://%s:%s\n' "$SERVER_IP" "$PORT"
-printf '用户名: %s\n' "$ADMIN_USER"
-printf '密码: %s\n' "$ADMIN_PASSWORD"
-printf '凭据备份: /root/sk5-panel-credentials.txt\n'
+if [[ "$AUTH_ALREADY_CONFIGURED" == "false" ]]; then
+  printf '用户名: %s\n' "$ADMIN_USER"
+  printf '密码: %s\n' "$ADMIN_PASSWORD"
+  printf '初始凭据备份: /root/sk5-panel-credentials.txt（后台修改后不会同步明文密码）\n'
+  printf '首次登录后请立即在 系统设置 -> 管理员账户 中修改默认密码。\n'
+else
+  printf '管理员账户: 已保留后台当前设置，请使用现有用户名和密码登录。\n'
+fi
 printf '请在对公网开放前配置防火墙、IP 白名单和 HTTPS。\n'

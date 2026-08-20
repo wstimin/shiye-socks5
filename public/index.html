@@ -32,7 +32,8 @@
       </div>
       <div class="sidebar-footer">
         <div class="avatar" aria-hidden="true"><span>S5</span></div>
-        <div><strong>Administrator</strong><span>超级管理员</span></div>
+        <div><strong id="admin-name">admin</strong><span>超级管理员</span></div>
+        <button class="mini-action" id="logout-button" title="退出登录"><i data-lucide="log-out"></i></button>
       </div>
     </aside>
 
@@ -110,6 +111,16 @@
             </div></div>
             <div class="settings-section"><div class="settings-copy"><span class="eyebrow">ACCESS CONTROL</span><h2>面板访问控制</h2><p>限制能够访问管理端的来源网络，一行一个 CIDR。</p></div><div class="settings-fields"><label class="wide-field"><span>管理员 IP 白名单</span><textarea class="input-control" name="panelAllowlist" rows="5" placeholder="10.0.0.0/24&#10;192.168.1.8/32"></textarea></label><div class="security-note"><i data-lucide="shield-alert"></i><span>生产模式建议仅通过 HTTPS 或内网 VPN 访问管理面板。</span></div></div></div>
             <div class="settings-actions"><span id="settings-save-state"></span><button class="primary-button" type="submit"><i data-lucide="save"></i>保存设置</button></div>
+          </form>
+          <form id="account-form" class="account-form">
+            <div class="settings-section"><div class="settings-copy"><span class="eyebrow">ADMIN ACCOUNT</span><h2>管理员账户</h2><p>修改面板登录用户名和密码。保存成功后，其他已登录设备会立即退出。</p></div><div class="settings-fields">
+              <label><span>登录用户名</span><input class="input-control" name="username" required maxlength="64" autocomplete="username"></label>
+              <label><span>当前密码</span><input class="input-control" name="currentPassword" required type="password" autocomplete="current-password"></label>
+              <label><span>新密码</span><input class="input-control" name="newPassword" required type="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+              <label><span>确认新密码</span><input class="input-control" name="confirmPassword" required type="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+              <div class="security-note"><i data-lucide="key-round"></i><span>新密码至少 8 个字符。首次登录默认账号密码均为 admin，请及时修改。</span></div>
+            </div></div>
+            <div class="settings-actions"><span id="account-save-state"></span><button class="primary-button" type="submit"><i data-lucide="save"></i>修改登录信息</button></div>
           </form>
         </section>
       </div>

@@ -1,5 +1,6 @@
 const state = {
   data: null,
+  auth: null,
   view: 'overview',
   modal: null,
   revealed: new Map(),
@@ -38,9 +39,17 @@ function icons() {
 async function api(url, options = {}) {
   const response = await fetch(url, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+    headers: {
+      'Content-Type': 'application/json',
+      ...(state.auth?.csrfToken && !['GET', 'HEAD'].includes(options.method || 'GET') ? { 'X-CSRF-Token': state.auth.csrfToken } : {}),
+      ...(options.headers || {})
+    }
   });
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    location.replace('/login.html');
+    throw new Error('登录已失效，请重新登录');
+  }
   if (!response.ok) throw new Error(body.error || '请求失败');
   return body;
 }
@@ -70,6 +79,7 @@ function renderAll() {
   $('#nav-l2tp-count').textContent = overview.totalL2tp;
   $('#mode-label').textContent = system.modeLabel;
   $('#side-mode').textContent = system.modeLabel;
+  $('#admin-name').textContent = system.adminUser || state.auth?.username || 'admin';
   renderReadiness();
   renderOverview();
   renderProxies();
@@ -208,13 +218,18 @@ function renderLogs() {
 
 function renderSettings() {
   const form = $('#settings-form');
-  if (document.activeElement && form.contains(document.activeElement)) return;
-  Object.entries(state.data.settings).forEach(([key, value]) => {
-    const field = form.elements[key];
-    if (!field) return;
-    if (field.type === 'checkbox') field.checked = Boolean(value);
-    else field.value = value ?? '';
-  });
+  if (!document.activeElement || !form.contains(document.activeElement)) {
+    Object.entries(state.data.settings).forEach(([key, value]) => {
+      const field = form.elements[key];
+      if (!field) return;
+      if (field.type === 'checkbox') field.checked = Boolean(value);
+      else field.value = value ?? '';
+    });
+  }
+  const accountForm = $('#account-form');
+  if (!document.activeElement || !accountForm.contains(document.activeElement)) {
+    accountForm.elements.username.value = state.data.system.adminUser || state.auth?.username || 'admin';
+  }
 }
 
 function paginate(items, requestedPage) {
@@ -432,6 +447,10 @@ document.addEventListener('click', async (event) => {
       const blob = new Blob([JSON.stringify(state.data.logs, null, 2)], { type: 'application/json' });
       const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `sk5-logs-${Date.now()}.json`; link.click(); URL.revokeObjectURL(link.href);
     }
+    if (target.id === 'logout-button') {
+      await api('/api/auth/logout', { method: 'POST' });
+      location.replace('/login.html');
+    }
   } catch (error) { toast(error.message, 'error'); }
 });
 
@@ -467,9 +486,34 @@ $('#settings-form').addEventListener('submit', async (event) => {
   } catch (error) { toast(error.message, 'error'); }
 });
 
+$('#account-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = Object.fromEntries(new FormData(form));
+  if (values.newPassword !== values.confirmPassword) return toast('两次输入的新密码不一致', 'error');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await api('/api/auth/credentials', { method: 'PUT', body: JSON.stringify(values) });
+    state.auth = { ...state.auth, username: result.username, csrfToken: result.csrfToken };
+    state.data.system.adminUser = result.username;
+    form.elements.currentPassword.value = '';
+    form.elements.newPassword.value = '';
+    form.elements.confirmPassword.value = '';
+    $('#account-save-state').textContent = '已修改';
+    $('#admin-name').textContent = result.username;
+    toast('管理员登录信息已修改，其他会话已退出');
+  } catch (error) { toast(error.message, 'error'); } finally { button.disabled = false; }
+});
+
 $('#modal-overlay').addEventListener('click', (event) => { if (event.target === event.currentTarget) closeModal(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
 
-refresh().catch((error) => {
-  document.body.innerHTML = `<div class="empty-state"><strong>面板加载失败</strong><span>${escapeHtml(error.message)}</span></div>`;
+api('/api/auth/session').then((session) => {
+  state.auth = session;
+  return refresh();
+}).catch((error) => {
+  if (!location.pathname.endsWith('/login.html')) {
+    document.body.innerHTML = `<div class="empty-state"><strong>面板加载失败</strong><span>${escapeHtml(error.message)}</span></div>`;
+  }
 });
